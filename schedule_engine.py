@@ -12,6 +12,12 @@ NFT_TABLE = "parental_control"
 NFT_SET = "blocked_macs"
 
 
+def write_log(message):
+
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(message + "\n")
+
+
 def run_nft(args):
     result = subprocess.run(
         ["nft"] + args,
@@ -253,7 +259,7 @@ def main():
 
             action = "BLOCK"
 
-        print(
+        message(
             f"{now:%Y-%m-%d %H:%M:%S} | "
             f"{user_name} | "
             f"{device_name} | "
@@ -261,6 +267,9 @@ def main():
             f"{action} | "
             f"{reason}"
         )
+
+        print(message)
+        write_log(message)
 
     conn.close()
 
