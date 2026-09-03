@@ -5,6 +5,7 @@ from datetime import datetime
 
 
 DB_PATH = "/home/pi/rpi-router-api/router.db"
+LOG_FILE = "/var/log/rpi-router/access.log"
 
 NFT_FAMILY = "inet"
 NFT_TABLE = "parental_control"
