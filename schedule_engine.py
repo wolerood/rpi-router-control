@@ -234,6 +234,7 @@ def main():
                     user_name = ?,
                     action = ?,
                     reason = ?
+                    timestamp = ?
                 WHERE mac = ?
             """,
             (
@@ -241,6 +242,7 @@ def main():
                 user_name,
                 action,
                 reason,
+                timestamp,
                 mac
             ))
 
