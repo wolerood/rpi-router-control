@@ -314,4 +314,21 @@ def check_access(user_id):
         "weekday": weekday
     })
 
+@app.route("/logs")
+def logs():
+
+    try:
+        with open(
+            "/var/log/rpi-router/access.log",
+            encoding="utf-8"
+        ) as f:
+            lines = f.readlines()
+
+        return jsonify(
+            lines[-50:]
+        )
+
+    except Exception:
+        return jsonify([])
+
 app.run(host="0.0.0.0", port=8080)
