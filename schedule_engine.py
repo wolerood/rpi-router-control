@@ -164,6 +164,37 @@ def main():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
+    def write_access_log(
+    cur,
+    mac,
+    device_name,
+    user_name,
+    action,
+    reason,
+    timestamp
+):
+
+    cur.execute("""
+        INSERT INTO access_log
+        (
+            device_mac,
+            device_name,
+            user_name,
+            action,
+            reason,
+            timestamp
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+    """,
+    (
+        mac,
+        device_name,
+        user_name,
+        action,
+        reason,
+        timestamp
+    ))
+
     cur.execute("""
         SELECT
             devices.mac,
@@ -270,6 +301,15 @@ def main():
 
         print(message)
         write_log(message)
+
+        write_access_log(
+            cur,
+            mac,
+            device_name,
+            user_name,
+            action,
+            reason,
+            f"{now:%Y-%m-%d %H:%M:%S}"
 
     conn.close()
 
