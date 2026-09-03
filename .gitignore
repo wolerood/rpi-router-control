@@ -1,0 +1,5 @@
+router.db
+router.db-shm
+router.db-wal
+__pycache__/
+*.pyc
