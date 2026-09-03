@@ -233,7 +233,7 @@ def main():
                     device_name = ?,
                     user_name = ?,
                     action = ?,
-                    reason = ?
+                    reason = ?,
                     timestamp = ?
                 WHERE mac = ?
             """,
