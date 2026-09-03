@@ -380,16 +380,16 @@ def main():
                 f"{now:%Y-%m-%d %H:%M:%S}"
             )
 
-
-        update_state(
-            cur,
-            mac,
-            device_name,
-            user_name,
-            action,
-            reason,
-            f"{now:%Y-%m-%d %H:%M:%S}"
-        )
+        if previous is None or previous[0] != action or previous[1] != reason:
+            update_state(
+                cur,
+                mac,
+                device_name,
+                user_name,
+                action,
+                reason,
+                f"{now:%Y-%m-%d %H:%M:%S}"
+            )
 
         conn.commit()
 
