@@ -172,7 +172,7 @@ def main():
         action,
         reason,
         timestamp
-    ):
+        ):
 
         cur.execute("""
             INSERT INTO access_log
@@ -205,6 +205,56 @@ def main():
         JOIN users
         ON devices.user_id = users.id
     """)
+
+    def get_previous_state(cur, mac):
+
+        cur.execute("""
+            SELECT action, reason
+            FROM device_state
+            WHERE mac = ?
+        """, (mac,))
+
+        return cur.fetchone()
+
+    def update_state(
+        cur,
+        mac,
+        device_name,
+        user_name,
+        action,
+        reason,
+        timestamp
+        ):
+
+        cur.execute("""
+            INSERT INTO device_state
+            (
+                mac,
+                device_name,
+                user_name,
+                action,
+                reason,
+                timestamp
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+
+            ON CONFLICT(mac)
+            DO UPDATE SET
+                device_name=excluded.device_name,
+                user_name=excluded.user_name,
+                action=excluded.action,
+                reason=excluded.reason,
+                timestamp=excluded.timestamp
+        """,
+        (
+            mac,
+            device_name,
+            user_name,
+            action,
+            reason,
+            timestamp
+        ))
+
 
     devices = cur.fetchall()
 
@@ -302,7 +352,23 @@ def main():
         print(message)
         write_log(message)
 
-        write_access_log(
+
+        previous = get_previous_state(cur, mac)
+
+        if previous is None or previous[0] != action:
+
+            write_access_log(
+                cur,
+                mac,
+                device_name,
+                user_name,
+                action,
+                reason,
+                f"{now:%Y-%m-%d %H:%M:%S}"
+            )
+
+
+        update_state(
             cur,
             mac,
             device_name,
@@ -312,8 +378,10 @@ def main():
             f"{now:%Y-%m-%d %H:%M:%S}"
         )
 
+conn.commit()
+
         conn.commit()
-        
+
     conn.close()
 
     return exit_code
