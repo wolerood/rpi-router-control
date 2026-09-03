@@ -317,18 +317,36 @@ def check_access(user_id):
 @app.route("/logs")
 def logs():
 
-    try:
-        with open(
-            "/var/log/rpi-router/access.log",
-            encoding="utf-8"
-        ) as f:
-            lines = f.readlines()
+    conn = get_connection()
+    cur = conn.cursor()
 
-        return jsonify(
-            lines[-50:]
-        )
+    cur.execute("""
+        SELECT
+            timestamp,
+            user_name,
+            device_name,
+            device_mac,
+            action,
+            reason
+        FROM access_log
+        ORDER BY id DESC
+        LIMIT 50
+    """)
 
-    except Exception:
-        return jsonify([])
+    result = []
+
+    for row in cur.fetchall():
+        result.append({
+            "time": row[0],
+            "user": row[1],
+            "device": row[2],
+            "mac": row[3],
+            "action": row[4],
+            "reason": row[5]
+        })
+
+    conn.close()
+
+    return jsonify(result) 
 
 app.run(host="0.0.0.0", port=8080)
