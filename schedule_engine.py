@@ -165,14 +165,14 @@ def main():
     cur = conn.cursor()
 
     def write_access_log(
-    cur,
-    mac,
-    device_name,
-    user_name,
-    action,
-    reason,
-    timestamp
-):
+        cur,
+        mac,
+        device_name,
+        user_name,
+        action,
+        reason,
+        timestamp
+    ):
 
     cur.execute("""
         INSERT INTO access_log
