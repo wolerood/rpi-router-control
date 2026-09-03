@@ -174,26 +174,26 @@ def main():
         timestamp
     ):
 
-    cur.execute("""
-        INSERT INTO access_log
+        cur.execute("""
+            INSERT INTO access_log
+            (
+                device_mac,
+                device_name,
+                user_name,
+                action,
+                reason,
+                timestamp
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """,
         (
-            device_mac,
+            mac,
             device_name,
             user_name,
             action,
             reason,
             timestamp
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-    """,
-    (
-        mac,
-        device_name,
-        user_name,
-        action,
-        reason,
-        timestamp
-    ))
+        ))
 
     cur.execute("""
         SELECT
@@ -310,7 +310,10 @@ def main():
             action,
             reason,
             f"{now:%Y-%m-%d %H:%M:%S}"
+        )
 
+        conn.commit()
+        
     conn.close()
 
     return exit_code
