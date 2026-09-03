@@ -378,8 +378,6 @@ def main():
             f"{now:%Y-%m-%d %H:%M:%S}"
         )
 
-conn.commit()
-
         conn.commit()
 
     conn.close()
