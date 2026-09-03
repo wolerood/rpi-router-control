@@ -216,6 +216,7 @@ def main():
 
         return cur.fetchone()
 
+
     def update_state(
         cur,
         mac,
@@ -226,34 +227,44 @@ def main():
         timestamp
         ):
 
-        cur.execute("""
-            INSERT INTO device_state
+            cur.execute("""
+                UPDATE device_state
+                SET
+                    device_name = ?,
+                    user_name = ?,
+                    action = ?,
+                    reason = ?
+                WHERE mac = ?
+            """,
             (
-                mac,
                 device_name,
                 user_name,
                 action,
                 reason,
-                timestamp
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
+                mac
+            ))
 
-            ON CONFLICT(mac)
-            DO UPDATE SET
-                device_name=excluded.device_name,
-                user_name=excluded.user_name,
-                action=excluded.action,
-                reason=excluded.reason,
-                timestamp=excluded.timestamp
-        """,
-        (
-            mac,
-            device_name,
-            user_name,
-            action,
-            reason,
-            timestamp
-        ))
+            if cur.rowcount == 0:
+                cur.execute("""
+                    INSERT INTO device_state
+                    (
+                        mac,
+                        device_name,
+                        user_name,
+                        action,
+                        reason,
+                        timestamp
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mac,
+                    device_name,
+                    user_name,
+                    action,
+                    reason,
+                    timestamp
+                ))
 
 
     devices = cur.fetchall()
