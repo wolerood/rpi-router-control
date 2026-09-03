@@ -259,7 +259,7 @@ def main():
 
             action = "BLOCK"
 
-        message(
+        message = (
             f"{now:%Y-%m-%d %H:%M:%S} | "
             f"{user_name} | "
             f"{device_name} | "
