@@ -235,7 +235,6 @@ def main():
                     action = ?,
                     reason = ?
                     timestamp = ?
-                    mac
                 WHERE mac = ?
             """,
             (
