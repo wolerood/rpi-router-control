@@ -272,6 +272,42 @@ def add_device():
         "name": name
     })
 
+@app.route("/devices", methods=["GET"])
+def get_devices():
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            d.id,
+            d.user_id,
+            d.mac,
+            d.name,
+            u.name
+        FROM devices d
+        LEFT JOIN users u
+            ON d.user_id = u.id
+        ORDER BY d.id
+    """)
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    devices = []
+
+    for row in rows:
+        devices.append({
+            "id": row[0],
+            "user_id": row[1],
+            "mac": row[2],
+            "name": row[3],
+            "user": row[4]
+        })
+
+    return jsonify(devices)
+
 @app.route("/schedules")
 def schedules():
 
