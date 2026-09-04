@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 from database import get_connection
 from datetime import datetime
+import sqlite3
 import subprocess
 
 app = Flask(__name__)
@@ -220,6 +221,7 @@ def add_device():
     conn = get_connection()
     cur = conn.cursor()
 
+    # Проверяем, существует ли пользователь
     cur.execute("""
         SELECT id
         FROM users
@@ -233,22 +235,31 @@ def add_device():
             "error": "user not found"
         }), 404
 
-    cur.execute("""
-        INSERT INTO devices
+    # Добавляем устройство
+    try:
+        cur.execute("""
+            INSERT INTO devices
+            (
+                user_id,
+                mac,
+                name
+            )
+            VALUES (?, ?, ?)
+        """,
         (
             user_id,
             mac,
             name
-        )
-        VALUES (?, ?, ?)
-    """,
-    (
-        user_id,
-        mac,
-        name
-    ))
+        ))
 
-    conn.commit()
+        conn.commit()
+
+    except sqlite3.IntegrityError:
+        conn.close()
+
+        return jsonify({
+            "error": "device with this MAC already exists"
+        }), 409
 
     device_id = cur.lastrowid
 
