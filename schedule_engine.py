@@ -126,6 +126,9 @@ def check_access(cur, user_id, weekday, current_time):
     if access_mode != "schedule":
         return None, f"invalid access_mode: {access_mode}"
 
+    #
+    # Расписания, которые начинаются сегодня.
+    #
     cur.execute("""
         SELECT start_time, end_time
         FROM schedules
@@ -139,8 +142,51 @@ def check_access(cur, user_id, weekday, current_time):
     schedules = cur.fetchall()
 
     for start_time, end_time in schedules:
-        if start_time <= current_time <= end_time:
-            return True, f"{start_time}-{end_time}"
+
+        #
+        # Обычный интервал, например 07:00-21:00.
+        #
+        if start_time <= end_time:
+
+            if start_time <= current_time <= end_time:
+                return True, f"{start_time}-{end_time}"
+
+        #
+        # Ночной интервал, например 22:00-07:00.
+        # Здесь проверяется часть ДО полуночи.
+        #
+        else:
+
+            if current_time >= start_time:
+                return True, f"{start_time}-{end_time}"
+
+    #
+    # Проверяем ночной интервал, начавшийся вчера.
+    #
+    previous_weekday = 7 if weekday == 1 else weekday - 1
+
+    cur.execute("""
+        SELECT start_time, end_time
+        FROM schedules
+        WHERE user_id = ?
+        AND weekday = ?
+    """, (
+        user_id,
+        previous_weekday
+    ))
+
+    previous_schedules = cur.fetchall()
+
+    for start_time, end_time in previous_schedules:
+
+        #
+        # Нас интересуют только интервалы,
+        # пересекающие полночь.
+        #
+        if start_time > end_time:
+
+            if current_time <= end_time:
+                return True, f"{start_time}-{end_time}"
 
     return False, "outside schedule"
 

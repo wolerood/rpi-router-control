@@ -334,6 +334,7 @@ def add_schedule():
         "end": end
     })
 
+
 @app.route("/access/<int:user_id>")
 def check_access(user_id):
 
@@ -355,6 +356,7 @@ def check_access(user_id):
 
     if not user:
         conn.close()
+
         return jsonify({
             "error": "user not found"
         }), 404
@@ -394,6 +396,9 @@ def check_access(user_id):
             "access_mode": access_mode
         }), 500
 
+    #
+    # Расписания, начинающиеся сегодня.
+    #
     cur.execute("""
         SELECT start_time, end_time
         FROM schedules
@@ -406,18 +411,69 @@ def check_access(user_id):
 
     schedules = cur.fetchall()
 
+    for start_time, end_time in schedules:
+
+        if start_time <= end_time:
+
+            if start_time <= current_time <= end_time:
+                conn.close()
+
+                return jsonify({
+                    "user": user_name,
+                    "access_mode": access_mode,
+                    "allowed": True,
+                    "reason": f"{start_time}-{end_time}",
+                    "time": current_time,
+                    "weekday": weekday
+                })
+
+        else:
+
+            if current_time >= start_time:
+                conn.close()
+
+                return jsonify({
+                    "user": user_name,
+                    "access_mode": access_mode,
+                    "allowed": True,
+                    "reason": f"{start_time}-{end_time}",
+                    "time": current_time,
+                    "weekday": weekday
+                })
+
+    #
+    # Проверяем ночной интервал предыдущего дня.
+    #
+    previous_weekday = 7 if weekday == 1 else weekday - 1
+
+    cur.execute("""
+        SELECT start_time, end_time
+        FROM schedules
+        WHERE user_id = ?
+        AND weekday = ?
+    """, (
+        user_id,
+        previous_weekday
+    ))
+
+    previous_schedules = cur.fetchall()
+
     conn.close()
 
-    for start_time, end_time in schedules:
-        if start_time <= current_time <= end_time:
-            return jsonify({
-                "user": user_name,
-                "access_mode": access_mode,
-                "allowed": True,
-                "reason": f"{start_time}-{end_time}",
-                "time": current_time,
-                "weekday": weekday
-            })
+    for start_time, end_time in previous_schedules:
+
+        if start_time > end_time:
+
+            if current_time <= end_time:
+
+                return jsonify({
+                    "user": user_name,
+                    "access_mode": access_mode,
+                    "allowed": True,
+                    "reason": f"{start_time}-{end_time}",
+                    "time": current_time,
+                    "weekday": weekday
+                })
 
     return jsonify({
         "user": user_name,
@@ -427,6 +483,7 @@ def check_access(user_id):
         "time": current_time,
         "weekday": weekday
     })
+
 
 @app.route("/logs")
 def logs():
