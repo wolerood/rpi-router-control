@@ -7,12 +7,12 @@ DB_PATH = "/home/pi/rpi-router-api/router.db"
 
 def check_access(user_id):
 
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
     now = datetime.now()
     weekday = now.isoweekday()
     current_time = now.strftime("%H:%M")
-
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
 
     cur.execute("""
         SELECT name, access_mode
@@ -24,7 +24,7 @@ def check_access(user_id):
 
     if not user:
         conn.close()
-        return False, "user not found"
+        return None, "user not found"
 
     user_name = user[0]
     access_mode = user[1]
@@ -37,24 +37,64 @@ def check_access(user_id):
         conn.close()
         return False, "manual block"
 
+    if access_mode != "schedule":
+        conn.close()
+        return None, f"invalid access_mode: {access_mode}"
+
+    # Расписания, начинающиеся сегодня
     cur.execute("""
         SELECT start_time, end_time
         FROM schedules
         WHERE user_id = ?
         AND weekday = ?
-    """,
-    (
+    """, (
         user_id,
         weekday
     ))
 
     schedules = cur.fetchall()
 
+    for start_time, end_time in schedules:
+
+        # Обычный интервал, например 07:00-21:00
+        if start_time <= end_time:
+
+            if start_time <= current_time <= end_time:
+                conn.close()
+                return True, f"{start_time}-{end_time}"
+
+        # Ночной интервал, например 22:00-07:00
+        else:
+
+            # Часть интервала до полуночи
+            if current_time >= start_time:
+                conn.close()
+                return True, f"{start_time}-{end_time}"
+
+    # Проверяем ночной интервал,
+    # который начался в предыдущий день
+    previous_weekday = 7 if weekday == 1 else weekday - 1
+
+    cur.execute("""
+        SELECT start_time, end_time
+        FROM schedules
+        WHERE user_id = ?
+        AND weekday = ?
+    """, (
+        user_id,
+        previous_weekday
+    ))
+
+    previous_schedules = cur.fetchall()
+
     conn.close()
 
-    for item in schedules:
-        if item[0] <= current_time <= item[1]:
-            return True, f"{item[0]}-{item[1]}"
+    for start_time, end_time in previous_schedules:
+
+        if start_time > end_time:
+
+            if current_time <= end_time:
+                return True, f"{start_time}-{end_time}"
 
     return False, "outside schedule"
 
