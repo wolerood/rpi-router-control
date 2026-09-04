@@ -265,7 +265,6 @@ def schedules():
 
     return jsonify(result)
 
-
 @app.route("/schedules", methods=["POST"])
 def add_schedule():
 
@@ -283,6 +282,24 @@ def add_schedule():
             "error": "missing fields"
         }), 400
 
+    user_id = data["user_id"]
+    weekday = data["weekday"]
+    start = data["start"]
+    end = data["end"]
+
+    if not isinstance(weekday, int) or not 1 <= weekday <= 7:
+        return jsonify({
+            "error": "weekday must be integer from 1 to 7"
+        }), 400
+
+    try:
+        datetime.strptime(start, "%H:%M")
+        datetime.strptime(end, "%H:%M")
+    except (ValueError, TypeError):
+        return jsonify({
+            "error": "start and end must be in HH:MM format"
+        }), 400
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -297,10 +314,10 @@ def add_schedule():
         VALUES (?, ?, ?, ?)
     """,
     (
-        data["user_id"],
-        data["weekday"],
-        data["start"],
-        data["end"]
+        user_id,
+        weekday,
+        start,
+        end
     ))
 
     conn.commit()
@@ -310,7 +327,11 @@ def add_schedule():
     conn.close()
 
     return jsonify({
-        "id": schedule_id
+        "id": schedule_id,
+        "user_id": user_id,
+        "weekday": weekday,
+        "start": start,
+        "end": end
     })
 
 @app.route("/access/<int:user_id>")
