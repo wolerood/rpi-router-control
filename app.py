@@ -86,6 +86,7 @@ def clients():
 
     return jsonify(dhcp)
 
+
 @app.route("/users")
 def users():
 
@@ -109,6 +110,7 @@ def users():
 
     return jsonify(result)
 
+# добавление пользователя
 @app.route("/users", methods=["POST"])
 def add_user():
 
@@ -136,6 +138,58 @@ def add_user():
         "name": data["name"]
     })
 
+# переименование пользователя
+@app.route("/users/<int:user_id>", methods=["PATCH"])
+def update_user(user_id):
+
+    data = request.get_json()
+
+    if not data or "name" not in data:
+        return jsonify({
+            "error": "name required"
+        }), 400
+
+    name = data["name"]
+
+    if not isinstance(name, str) or not name.strip():
+        return jsonify({
+            "error": "name must be non-empty string"
+        }), 400
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id
+        FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    if not cur.fetchone():
+        conn.close()
+
+        return jsonify({
+            "error": "user not found"
+        }), 404
+
+    cur.execute("""
+        UPDATE users
+        SET name = ?
+        WHERE id = ?
+    """, (
+        name.strip(),
+        user_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "id": user_id,
+        "name": name.strip()
+    })
+
+# изменение доступа пользователя
 @app.route("/users/<int:user_id>/access_mode", methods=["PATCH"])
 def update_access_mode(user_id):
 
@@ -191,6 +245,64 @@ def update_access_mode(user_id):
     return jsonify({
         "user_id": user_id,
         "access_mode": access_mode
+    })
+
+# удаление пользователя
+@app.route("/users/<int:user_id>", methods=["DELETE"])
+def delete_user(user_id):
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id
+        FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    if not cur.fetchone():
+        conn.close()
+
+        return jsonify({
+            "error": "user not found"
+        }), 404
+
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM devices
+        WHERE user_id = ?
+    """, (user_id,))
+
+    device_count = cur.fetchone()[0]
+
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM schedules
+        WHERE user_id = ?
+    """, (user_id,))
+
+    schedule_count = cur.fetchone()[0]
+
+    if device_count > 0 or schedule_count > 0:
+        conn.close()
+
+        return jsonify({
+            "error": "user has related records",
+            "devices": device_count,
+            "schedules": schedule_count
+        }), 409
+
+    cur.execute("""
+        DELETE FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "deleted": True,
+        "user_id": user_id
     })
 
 @app.route("/devices", methods=["POST"])
