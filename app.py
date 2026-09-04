@@ -270,7 +270,7 @@ def check_access(user_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT name
+        SELECT name, access_mode
         FROM users
         WHERE id = ?
     """, (user_id,))
@@ -280,17 +280,50 @@ def check_access(user_id):
     if not user:
         conn.close()
         return jsonify({
-            "error":"user not found"
-        }),404
+            "error": "user not found"
+        }), 404
 
+    user_name = user[0]
+    access_mode = user[1]
+
+    if access_mode == "always_allow":
+        conn.close()
+
+        return jsonify({
+            "user": user_name,
+            "access_mode": access_mode,
+            "allowed": True,
+            "reason": "manual allow",
+            "time": current_time,
+            "weekday": weekday
+        })
+
+    if access_mode == "always_block":
+        conn.close()
+
+        return jsonify({
+            "user": user_name,
+            "access_mode": access_mode,
+            "allowed": False,
+            "reason": "manual block",
+            "time": current_time,
+            "weekday": weekday
+        })
+
+    if access_mode != "schedule":
+        conn.close()
+
+        return jsonify({
+            "error": "invalid access_mode",
+            "access_mode": access_mode
+        }), 500
 
     cur.execute("""
         SELECT start_time, end_time
         FROM schedules
         WHERE user_id = ?
         AND weekday = ?
-    """,
-    (
+    """, (
         user_id,
         weekday
     ))
@@ -299,17 +332,22 @@ def check_access(user_id):
 
     conn.close()
 
-
-    allowed = False
-
-    for item in schedules:
-        if item[0] <= current_time <= item[1]:
-            allowed = True
-
+    for start_time, end_time in schedules:
+        if start_time <= current_time <= end_time:
+            return jsonify({
+                "user": user_name,
+                "access_mode": access_mode,
+                "allowed": True,
+                "reason": f"{start_time}-{end_time}",
+                "time": current_time,
+                "weekday": weekday
+            })
 
     return jsonify({
-        "user": user[0],
-        "allowed": allowed,
+        "user": user_name,
+        "access_mode": access_mode,
+        "allowed": False,
+        "reason": "outside schedule",
         "time": current_time,
         "weekday": weekday
     })
