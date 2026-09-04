@@ -101,7 +101,7 @@ def check_access(user_id):
 
 def check_devices():
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
