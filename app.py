@@ -618,6 +618,7 @@ def get_schedules():
 
     return jsonify(schedules)
 
+# добавление расписания
 @app.route("/schedules", methods=["POST"])
 def add_schedule():
 
@@ -703,6 +704,201 @@ def add_schedule():
         "weekday": weekday,
         "start": start,
         "end": end
+    })
+
+# изменение расписания
+@app.route("/schedules/<int:schedule_id>", methods=["PATCH"])
+def update_schedule(schedule_id):
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "error": "no data provided"
+        }), 400
+
+    allowed_fields = {
+        "user_id",
+        "weekday",
+        "start",
+        "end"
+    }
+
+    if not any(field in data for field in allowed_fields):
+        return jsonify({
+            "error": "nothing to update"
+        }), 400
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id
+        FROM schedules
+        WHERE id = ?
+    """, (schedule_id,))
+
+    if not cur.fetchone():
+        conn.close()
+
+        return jsonify({
+            "error": "schedule not found"
+        }), 404
+
+    fields = []
+    values = []
+
+    if "user_id" in data:
+        user_id = data["user_id"]
+
+        if not isinstance(user_id, int):
+            conn.close()
+
+            return jsonify({
+                "error": "user_id must be integer"
+            }), 400
+
+        cur.execute("""
+            SELECT id
+            FROM users
+            WHERE id = ?
+        """, (user_id,))
+
+        if not cur.fetchone():
+            conn.close()
+
+            return jsonify({
+                "error": "user not found"
+            }), 404
+
+        fields.append("user_id = ?")
+        values.append(user_id)
+
+    if "weekday" in data:
+        weekday = data["weekday"]
+
+        if not isinstance(weekday, int) or not 1 <= weekday <= 7:
+            conn.close()
+
+            return jsonify({
+                "error": "weekday must be integer from 1 to 7"
+            }), 400
+
+        fields.append("weekday = ?")
+        values.append(weekday)
+
+    if "start" in data:
+        start = data["start"]
+
+        try:
+            datetime.strptime(start, "%H:%M")
+        except (ValueError, TypeError):
+            conn.close()
+
+            return jsonify({
+                "error": "start must be in HH:MM format"
+            }), 400
+
+        fields.append("start_time = ?")
+        values.append(start)
+
+    if "end" in data:
+        end = data["end"]
+
+        try:
+            datetime.strptime(end, "%H:%M")
+        except (ValueError, TypeError):
+            conn.close()
+
+            return jsonify({
+                "error": "end must be in HH:MM format"
+            }), 400
+
+        fields.append("end_time = ?")
+        values.append(end)
+
+    values.append(schedule_id)
+
+    cur.execute(
+        f"""
+        UPDATE schedules
+        SET {", ".join(fields)}
+        WHERE id = ?
+        """,
+        values
+    )
+
+    conn.commit()
+
+    cur.execute("""
+        SELECT
+            s.id,
+            s.user_id,
+            u.name,
+            s.weekday,
+            s.start_time,
+            s.end_time
+        FROM schedules s
+        LEFT JOIN users u
+            ON s.user_id = u.id
+        WHERE s.id = ?
+    """, (schedule_id,))
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    return jsonify({
+        "id": row[0],
+        "user_id": row[1],
+        "user": row[2],
+        "weekday": row[3],
+        "start": row[4],
+        "end": row[5]
+    })
+
+# удаление расписания
+@app.route("/schedules/<int:schedule_id>", methods=["DELETE"])
+def delete_schedule(schedule_id):
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            user_id,
+            weekday,
+            start_time,
+            end_time
+        FROM schedules
+        WHERE id = ?
+    """, (schedule_id,))
+
+    schedule = cur.fetchone()
+
+    if not schedule:
+        conn.close()
+
+        return jsonify({
+            "error": "schedule not found"
+        }), 404
+
+    cur.execute("""
+        DELETE FROM schedules
+        WHERE id = ?
+    """, (schedule_id,))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "deleted": True,
+        "schedule_id": schedule_id,
+        "user_id": schedule[1],
+        "weekday": schedule[2],
+        "start": schedule[3],
+        "end": schedule[4]
     })
 
 @app.route("/access/<int:user_id>")
