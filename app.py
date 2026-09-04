@@ -26,7 +26,6 @@ def get_dhcp_clients():
 
     return clients
 
-
 def get_wifi_clients():
     clients = set()
 
@@ -198,24 +197,55 @@ def add_device():
 
     data = request.get_json()
 
-    required = ["user_id", "mac", "name"]
+    required = [
+        "user_id",
+        "mac",
+        "name"
+    ]
 
     if not data or not all(x in data for x in required):
         return jsonify({
-            "error": "user_id, mac and name required"
+            "error": "missing fields"
+        }), 400
+
+    user_id = data["user_id"]
+    mac = data["mac"]
+    name = data["name"]
+
+    if not isinstance(user_id, int):
+        return jsonify({
+            "error": "user_id must be integer"
         }), 400
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
+        SELECT id
+        FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    if not cur.fetchone():
+        conn.close()
+
+        return jsonify({
+            "error": "user not found"
+        }), 404
+
+    cur.execute("""
         INSERT INTO devices
-        (user_id, mac, name)
+        (
+            user_id,
+            mac,
+            name
+        )
         VALUES (?, ?, ?)
-    """, (
-        data["user_id"],
-        data["mac"].lower(),
-        data["name"]
+    """,
+    (
+        user_id,
+        mac,
+        name
     ))
 
     conn.commit()
@@ -226,9 +256,9 @@ def add_device():
 
     return jsonify({
         "id": device_id,
-        "user_id": data["user_id"],
-        "mac": data["mac"],
-        "name": data["name"]
+        "user_id": user_id,
+        "mac": mac,
+        "name": name
     })
 
 @app.route("/schedules")
@@ -287,6 +317,11 @@ def add_schedule():
     start = data["start"]
     end = data["end"]
 
+    if not isinstance(user_id, int):
+        return jsonify({
+            "error": "user_id must be integer"
+        }), 400
+
     if not isinstance(weekday, int) or not 1 <= weekday <= 7:
         return jsonify({
             "error": "weekday must be integer from 1 to 7"
@@ -302,6 +337,19 @@ def add_schedule():
 
     conn = get_connection()
     cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id
+        FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    if not cur.fetchone():
+        conn.close()
+
+        return jsonify({
+            "error": "user not found"
+        }), 404
 
     cur.execute("""
         INSERT INTO schedules
@@ -333,7 +381,6 @@ def add_schedule():
         "start": start,
         "end": end
     })
-
 
 @app.route("/access/<int:user_id>")
 def check_access(user_id):
@@ -483,7 +530,6 @@ def check_access(user_id):
         "time": current_time,
         "weekday": weekday
     })
-
 
 @app.route("/logs")
 def logs():
