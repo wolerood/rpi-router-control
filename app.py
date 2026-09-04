@@ -46,7 +46,6 @@ def get_wifi_clients():
 
     return clients
 
-
 @app.route("/clients")
 def clients():
 
@@ -86,7 +85,6 @@ def clients():
             client["owner"] = None
 
     return jsonify(dhcp)
-
 
 @app.route("/users")
 def users():
@@ -136,6 +134,63 @@ def add_user():
     return jsonify({
         "id": user_id,
         "name": data["name"]
+    })
+
+@app.route("/users/<int:user_id>/access_mode", methods=["PATCH"])
+def update_access_mode(user_id):
+
+    data = request.get_json()
+
+    if not data or "access_mode" not in data:
+        return jsonify({
+            "error": "access_mode required"
+        }), 400
+
+    access_mode = data["access_mode"]
+
+    allowed_modes = [
+        "schedule",
+        "always_allow",
+        "always_block"
+    ]
+
+    if access_mode not in allowed_modes:
+        return jsonify({
+            "error": "invalid access_mode",
+            "allowed_values": allowed_modes
+        }), 400
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id
+        FROM users
+        WHERE id = ?
+    """, (user_id,))
+
+    if not cur.fetchone():
+        conn.close()
+
+        return jsonify({
+            "error": "user not found"
+        }), 404
+
+    cur.execute("""
+        UPDATE users
+        SET access_mode = ?
+        WHERE id = ?
+    """, (
+        access_mode,
+        user_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "user_id": user_id,
+        "access_mode": access_mode
     })
 
 @app.route("/devices", methods=["POST"])
