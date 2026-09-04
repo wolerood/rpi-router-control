@@ -420,6 +420,163 @@ def get_devices():
 
     return jsonify(devices)
 
+# изменение устройства 
+@app.route("/devices/<int:device_id>", methods=["PATCH"])
+def update_device(device_id):
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "error": "no data provided"
+        }), 400
+
+    allowed_fields = {
+        "name",
+        "user_id"
+    }
+
+    if not any(field in data for field in allowed_fields):
+        return jsonify({
+            "error": "nothing to update"
+        }), 400
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id
+        FROM devices
+        WHERE id = ?
+    """, (device_id,))
+
+    if not cur.fetchone():
+        conn.close()
+
+        return jsonify({
+            "error": "device not found"
+        }), 404
+
+    if "user_id" in data:
+
+        user_id = data["user_id"]
+
+        if not isinstance(user_id, int):
+            conn.close()
+
+            return jsonify({
+                "error": "user_id must be integer"
+            }), 400
+
+        cur.execute("""
+            SELECT id
+            FROM users
+            WHERE id = ?
+        """, (user_id,))
+
+        if not cur.fetchone():
+            conn.close()
+
+            return jsonify({
+                "error": "user not found"
+            }), 404
+
+    fields = []
+    values = []
+
+    if "name" in data:
+
+        name = data["name"]
+
+        if not isinstance(name, str) or not name.strip():
+            conn.close()
+
+            return jsonify({
+                "error": "name must be non-empty string"
+            }), 400
+
+        fields.append("name = ?")
+        values.append(name.strip())
+
+    if "user_id" in data:
+        fields.append("user_id = ?")
+        values.append(data["user_id"])
+
+    values.append(device_id)
+
+    cur.execute(
+        f"""
+        UPDATE devices
+        SET {", ".join(fields)}
+        WHERE id = ?
+        """,
+        values
+    )
+
+    conn.commit()
+
+    cur.execute("""
+        SELECT
+            d.id,
+            d.user_id,
+            d.mac,
+            d.name,
+            u.name
+        FROM devices d
+        LEFT JOIN users u
+            ON d.user_id = u.id
+        WHERE d.id = ?
+    """, (device_id,))
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    return jsonify({
+        "id": row[0],
+        "user_id": row[1],
+        "mac": row[2],
+        "name": row[3],
+        "user": row[4]
+    })
+
+# удаление устройства
+@app.route("/devices/<int:device_id>", methods=["DELETE"])
+def delete_device(device_id):
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, mac, name
+        FROM devices
+        WHERE id = ?
+    """, (device_id,))
+
+    device = cur.fetchone()
+
+    if not device:
+        conn.close()
+
+        return jsonify({
+            "error": "device not found"
+        }), 404
+
+    cur.execute("""
+        DELETE FROM devices
+        WHERE id = ?
+    """, (device_id,))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "deleted": True,
+        "device_id": device_id,
+        "mac": device[1],
+        "name": device[2]
+    })
+
 @app.route("/schedules", methods=["GET"])
 def get_schedules():
 
