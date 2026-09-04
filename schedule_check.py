@@ -1,4 +1,4 @@
-import sqlite3
+from database import get_connection
 from datetime import datetime
 
 
@@ -7,7 +7,7 @@ DB_PATH = "/home/pi/rpi-router-api/router.db"
 
 def check_access(user_id):
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cur = conn.cursor()
 
     now = datetime.now()

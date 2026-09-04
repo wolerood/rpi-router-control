@@ -1,5 +1,5 @@
 import json
-import sqlite3
+from database import get_connection
 import subprocess
 from datetime import datetime
 
@@ -207,7 +207,7 @@ def main():
         )
         return 1
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cur = conn.cursor()
 
     def write_access_log(
