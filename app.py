@@ -308,39 +308,46 @@ def get_devices():
 
     return jsonify(devices)
 
-@app.route("/schedules")
-def schedules():
+@app.route("/schedules", methods=["GET"])
+def get_schedules():
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
         SELECT
-            schedules.id,
-            users.name,
-            schedules.weekday,
-            schedules.start_time,
-            schedules.end_time
-        FROM schedules
-        JOIN users
-        ON schedules.user_id = users.id
-        ORDER BY users.id, schedules.weekday
+            s.id,
+            s.user_id,
+            u.name,
+            s.weekday,
+            s.start_time,
+            s.end_time
+        FROM schedules s
+        LEFT JOIN users u
+            ON s.user_id = u.id
+        ORDER BY
+            s.user_id,
+            s.weekday,
+            s.start_time
     """)
 
-    result = []
-
-    for row in cur.fetchall():
-        result.append({
-            "id": row[0],
-            "user": row[1],
-            "weekday": row[2],
-            "start": row[3],
-            "end": row[4]
-        })
+    rows = cur.fetchall()
 
     conn.close()
 
-    return jsonify(result)
+    schedules = []
+
+    for row in rows:
+        schedules.append({
+            "id": row[0],
+            "user_id": row[1],
+            "user": row[2],
+            "weekday": row[3],
+            "start": row[4],
+            "end": row[5]
+        })
+
+    return jsonify(schedules)
 
 @app.route("/schedules", methods=["POST"])
 def add_schedule():
