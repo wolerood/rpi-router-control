@@ -19,12 +19,14 @@ access_policy.py
 app.py
 database.py
 firewall.py
+restore_firewall.py
 schedule_check.py
 schedule_engine.py
 requirements.txt
 README.md
 deploy/systemd/rpi-schedule-engine.service
 deploy/systemd/rpi-schedule-engine.timer
+deploy/systemd/parental-control.service
 "
 
 for relative_path in $required_files; do
@@ -77,6 +79,7 @@ for source_file in \
     app.py \
     database.py \
     firewall.py \
+    restore_firewall.py \
     schedule_check.py \
     schedule_engine.py
 do
@@ -91,6 +94,9 @@ RPI_ROUTER_DB_PATH="$LIVE_DIR/router.db" python3 "$LIVE_DIR/database.py"
 chown pi:pi "$LIVE_DIR/router.db"
 chmod 0640 "$LIVE_DIR/router.db"
 
+install -o root -g root -m 0644 \
+    "$STAGING_DIR/deploy/systemd/parental-control.service" \
+    "$SYSTEMD_DIR/parental-control.service"
 install -o root -g root -m 0644 \
     "$STAGING_DIR/deploy/systemd/rpi-schedule-engine.service" \
     "$SYSTEMD_DIR/rpi-schedule-engine.service"

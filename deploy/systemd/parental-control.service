@@ -1,0 +1,15 @@
+[Unit]
+Description=Parental control nftables rules
+After=local-fs.target
+Before=NetworkManager.service rpi-schedule-engine.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pi/rpi-router-api
+ExecStart=/usr/sbin/nft -f /etc/nftables-parental.conf
+ExecStartPost=/usr/bin/python3 /home/pi/rpi-router-api/restore_firewall.py
+ExecStop=/usr/sbin/nft delete table inet parental_control
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

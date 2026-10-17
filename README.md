@@ -57,6 +57,12 @@ The timer templates in `deploy/systemd` use a one-second accuracy window so a
 policy is reconciled no later than approximately one minute after the previous
 run completes.
 
+At boot, `parental-control.service` creates the nftables table before
+NetworkManager starts and runs `restore_firewall.py`. The restore step loads
+the last successfully recorded `BLOCK` states for devices which are still
+registered. This preserves the last applied restrictions until the schedule
+engine performs its first full policy reconciliation.
+
 Legacy `block-phone.timer` and `unblock-phone.timer` units must be disabled
 before enabling this timer. There must be only one writer for `blocked_macs`.
 
