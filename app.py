@@ -41,6 +41,10 @@ def require_write_token():
 def status():
     """Report whether the API, database and firewall control path are usable."""
     checked_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    write_auth = {
+        "mode": "token",
+        "configured": bool(app.config.get("API_TOKEN")),
+    }
 
     try:
         conn = get_connection()
@@ -55,6 +59,7 @@ def status():
             "status": "unavailable",
             "api_version": API_VERSION,
             "checked_at": checked_at,
+            "write_auth": write_auth,
             "database": {"ok": False, "error": str(error)},
             "firewall": {"ok": None},
         }), 503
@@ -66,6 +71,7 @@ def status():
             "status": "degraded",
             "api_version": API_VERSION,
             "checked_at": checked_at,
+            "write_auth": write_auth,
             "database": {
                 "ok": True,
                 "schema_version": schema_version,
@@ -75,10 +81,10 @@ def status():
             "firewall": {"ok": False, "error": str(error)},
         }), 503
 
-    return jsonify({
-        "status": "ok",
+    payload = {
+        "status": "ok" if write_auth["configured"] else "degraded",
         "api_version": API_VERSION,
-        "write_auth": "token",
+        "write_auth": write_auth,
         "checked_at": checked_at,
         "database": {
             "ok": True,
@@ -90,7 +96,8 @@ def status():
             "ok": True,
             "blocked_devices": len(blocked_macs),
         },
-    })
+    }
+    return jsonify(payload), 200 if write_auth["configured"] else 503
 
 
 def get_dhcp_clients():

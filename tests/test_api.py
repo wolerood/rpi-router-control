@@ -73,7 +73,10 @@ class ApiIntegrationTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["api_version"], 2)
-        self.assertEqual(payload["write_auth"], "token")
+        self.assertEqual(
+            payload["write_auth"],
+            {"configured": True, "mode": "token"},
+        )
         self.assertEqual(payload["database"]["users"], 1)
         self.assertEqual(payload["database"]["devices"], 1)
         self.assertEqual(payload["firewall"]["blocked_devices"], 1)
@@ -190,8 +193,11 @@ class ApiIntegrationTests(unittest.TestCase):
         app_module.app.config["API_TOKEN"] = ""
 
         response = self.client.post("/users", json={"name": "Blocked"})
+        status_response = self.client.get("/status")
 
         self.assertEqual(response.status_code, 503)
+        self.assertEqual(status_response.status_code, 503)
+        self.assertFalse(status_response.get_json()["write_auth"]["configured"])
 
 
 if __name__ == "__main__":
