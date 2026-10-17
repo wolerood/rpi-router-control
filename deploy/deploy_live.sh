@@ -27,6 +27,7 @@ README.md
 deploy/systemd/rpi-schedule-engine.service
 deploy/systemd/rpi-schedule-engine.timer
 deploy/systemd/parental-control.service
+deploy/systemd/rpi-router-api.service
 "
 
 for relative_path in $required_files; do
@@ -35,6 +36,13 @@ for relative_path in $required_files; do
         exit 1
     fi
 done
+
+if ! command -v gunicorn >/dev/null 2>&1; then
+    echo "ERROR: gunicorn is required; install the Debian package: sudo apt install gunicorn" >&2
+    exit 1
+fi
+
+gunicorn --check-config --chdir "$STAGING_DIR" app:app
 
 python3 -m compileall -q "$STAGING_DIR"
 (
@@ -61,6 +69,7 @@ tar -czf "$BACKUP_DIR/code.tar.gz" \
     -C "$LIVE_DIR" .
 
 for unit in \
+    parental-control.service \
     rpi-router-api.service \
     rpi-schedule-engine.service \
     rpi-schedule-engine.timer \
@@ -97,6 +106,9 @@ chmod 0640 "$LIVE_DIR/router.db"
 install -o root -g root -m 0644 \
     "$STAGING_DIR/deploy/systemd/parental-control.service" \
     "$SYSTEMD_DIR/parental-control.service"
+install -o root -g root -m 0644 \
+    "$STAGING_DIR/deploy/systemd/rpi-router-api.service" \
+    "$SYSTEMD_DIR/rpi-router-api.service"
 install -o root -g root -m 0644 \
     "$STAGING_DIR/deploy/systemd/rpi-schedule-engine.service" \
     "$SYSTEMD_DIR/rpi-schedule-engine.service"

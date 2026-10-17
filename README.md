@@ -78,6 +78,19 @@ The current API remains unauthenticated and must not be published directly to
 the internet. Remote access hardening is tracked as a separate deployment
 stage.
 
+The production service uses the Debian `gunicorn` package with two threaded
+workers. Install it before deployment:
+
+```sh
+sudo apt update
+sudo apt install gunicorn
+```
+
+The systemd unit keeps the existing `0.0.0.0:8080` listener and restarts the
+process on failure. It also applies baseline filesystem, kernel and namespace
+hardening without restricting the nftables and Wi-Fi diagnostics used by the
+API.
+
 `GET /status` is the health endpoint for clients and monitoring. It returns the
 API version, local timestamp, database schema and object counts, plus the
 number of MAC addresses currently blocked by nftables. HTTP 503 means that the
