@@ -77,3 +77,9 @@ The following environment variables are supported:
 The current API remains unauthenticated and must not be published directly to
 the internet. Remote access hardening is tracked as a separate deployment
 stage.
+
+`GET /status` is the health endpoint for clients and monitoring. It returns the
+API version, local timestamp, database schema and object counts, plus the
+number of MAC addresses currently blocked by nftables. HTTP 503 means that the
+database or firewall control path is unavailable; the response body identifies
+the failed component.

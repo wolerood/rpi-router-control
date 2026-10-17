@@ -12,6 +12,62 @@ import sqlite3
 import subprocess
 
 app = Flask(__name__)
+API_VERSION = 1
+
+
+@app.route("/status")
+def status():
+    """Report whether the API, database and firewall control path are usable."""
+    checked_at = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    try:
+        conn = get_connection()
+        try:
+            schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            user_count = conn.execute("SELECT count(*) FROM users").fetchone()[0]
+            device_count = conn.execute("SELECT count(*) FROM devices").fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error as error:
+        return jsonify({
+            "status": "unavailable",
+            "api_version": API_VERSION,
+            "checked_at": checked_at,
+            "database": {"ok": False, "error": str(error)},
+            "firewall": {"ok": None},
+        }), 503
+
+    try:
+        blocked_macs = get_blocked_macs()
+    except (FirewallError, ValueError) as error:
+        return jsonify({
+            "status": "degraded",
+            "api_version": API_VERSION,
+            "checked_at": checked_at,
+            "database": {
+                "ok": True,
+                "schema_version": schema_version,
+                "users": user_count,
+                "devices": device_count,
+            },
+            "firewall": {"ok": False, "error": str(error)},
+        }), 503
+
+    return jsonify({
+        "status": "ok",
+        "api_version": API_VERSION,
+        "checked_at": checked_at,
+        "database": {
+            "ok": True,
+            "schema_version": schema_version,
+            "users": user_count,
+            "devices": device_count,
+        },
+        "firewall": {
+            "ok": True,
+            "blocked_devices": len(blocked_macs),
+        },
+    })
 
 
 def get_dhcp_clients():

@@ -57,6 +57,36 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(access_response.status_code, 200)
         self.assertTrue(access_response.get_json()["allowed"])
 
+    def test_status_reports_database_and_firewall_health(self):
+        with patch.object(
+            app_module,
+            "get_blocked_macs",
+            return_value={"ca:ef:d8:95:11:b5"},
+        ):
+            response = self.client.get("/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["api_version"], 1)
+        self.assertEqual(payload["database"]["users"], 1)
+        self.assertEqual(payload["database"]["devices"], 1)
+        self.assertEqual(payload["firewall"]["blocked_devices"], 1)
+
+    def test_status_is_degraded_when_firewall_is_unavailable(self):
+        with patch.object(
+            app_module,
+            "get_blocked_macs",
+            side_effect=app_module.FirewallError("nft failed"),
+        ):
+            response = self.client.get("/status")
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "degraded")
+        self.assertTrue(payload["database"]["ok"])
+        self.assertFalse(payload["firewall"]["ok"])
+
     def test_creating_device_normalizes_mac(self):
         response = self.client.post(
             "/devices",
