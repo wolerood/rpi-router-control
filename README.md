@@ -96,3 +96,22 @@ API version, local timestamp, database schema and object counts, plus the
 number of MAC addresses currently blocked by nftables. HTTP 503 means that the
 database or firewall control path is unavailable; the response body identifies
 the failed component.
+
+## Write authentication
+
+All `POST`, `PATCH` and `DELETE` requests require an `X-API-Token` header.
+Read-only `GET` requests remain available without authentication. Deployment
+creates a 256-bit random token once in `/etc/rpi-router-api.env`, owned by root
+with mode `0600`; later deployments preserve the same token. The API refuses
+all write requests if the token is missing from the service environment.
+
+Display the token locally on the Raspberry Pi when configuring a trusted
+client:
+
+```sh
+sudo sed -n 's/^RPI_ROUTER_API_TOKEN=//p' /etc/rpi-router-api.env
+```
+
+The token is not encryption. Plain HTTP is acceptable only on the trusted home
+network. Internet access must terminate TLS or use a private VPN/tunnel before
+the API is exposed remotely.

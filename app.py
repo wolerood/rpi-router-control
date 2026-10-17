@@ -10,9 +10,31 @@ from firewall import FirewallError, allow_mac, get_blocked_macs
 from datetime import datetime
 import sqlite3
 import subprocess
+import os
+import secrets
 
 app = Flask(__name__)
-API_VERSION = 1
+API_VERSION = 2
+app.config["API_TOKEN"] = os.environ.get("RPI_ROUTER_API_TOKEN", "")
+
+
+@app.before_request
+def require_write_token():
+    if request.method not in {"POST", "PATCH", "DELETE"}:
+        return None
+
+    expected_token = app.config.get("API_TOKEN", "")
+    if not expected_token:
+        return jsonify({"error": "API write token is not configured"}), 503
+
+    supplied_token = request.headers.get("X-API-Token", "")
+    if not supplied_token or not secrets.compare_digest(
+        supplied_token,
+        expected_token,
+    ):
+        return jsonify({"error": "invalid or missing API token"}), 401
+
+    return None
 
 
 @app.route("/status")
@@ -56,6 +78,7 @@ def status():
     return jsonify({
         "status": "ok",
         "api_version": API_VERSION,
+        "write_auth": "token",
         "checked_at": checked_at,
         "database": {
             "ok": True,

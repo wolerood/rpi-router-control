@@ -42,10 +42,14 @@ class ApiIntegrationTests(unittest.TestCase):
             side_effect=lambda: get_connection(self.db_path),
         )
         self.connection_patch.start()
+        self.original_api_token = app_module.app.config.get("API_TOKEN")
+        app_module.app.config["API_TOKEN"] = "test-token"
+        self.auth_headers = {"X-API-Token": "test-token"}
         self.client = app_module.app.test_client()
 
     def tearDown(self):
         self.connection_patch.stop()
+        app_module.app.config["API_TOKEN"] = self.original_api_token
         self.temp_dir.cleanup()
 
     def test_reads_users_and_shared_access_policy(self):
@@ -68,7 +72,8 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["api_version"], 1)
+        self.assertEqual(payload["api_version"], 2)
+        self.assertEqual(payload["write_auth"], "token")
         self.assertEqual(payload["database"]["users"], 1)
         self.assertEqual(payload["database"]["devices"], 1)
         self.assertEqual(payload["firewall"]["blocked_devices"], 1)
@@ -90,6 +95,7 @@ class ApiIntegrationTests(unittest.TestCase):
     def test_creating_device_normalizes_mac(self):
         response = self.client.post(
             "/devices",
+            headers=self.auth_headers,
             json={
                 "user_id": self.user_id,
                 "mac": "02-11-22-33-44-55",
@@ -142,7 +148,10 @@ class ApiIntegrationTests(unittest.TestCase):
             ),
             patch.object(app_module, "allow_mac") as allow_mac,
         ):
-            response = self.client.delete(f"/devices/{self.device_id}")
+            response = self.client.delete(
+                f"/devices/{self.device_id}",
+                headers=self.auth_headers,
+            )
 
         self.assertEqual(response.status_code, 200)
         allow_mac.assert_called_once_with("ca:ef:d8:95:11:b5")
@@ -159,6 +168,30 @@ class ApiIntegrationTests(unittest.TestCase):
             )
         finally:
             conn.close()
+
+    def test_write_requests_require_valid_token(self):
+        missing = self.client.post("/users", json={"name": "Blocked"})
+        wrong = self.client.post(
+            "/users",
+            headers={"X-API-Token": "wrong"},
+            json={"name": "Blocked"},
+        )
+        allowed = self.client.post(
+            "/users",
+            headers=self.auth_headers,
+            json={"name": "Allowed"},
+        )
+
+        self.assertEqual(missing.status_code, 401)
+        self.assertEqual(wrong.status_code, 401)
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_write_requests_fail_closed_without_server_token(self):
+        app_module.app.config["API_TOKEN"] = ""
+
+        response = self.client.post("/users", json={"name": "Blocked"})
+
+        self.assertEqual(response.status_code, 503)
 
 
 if __name__ == "__main__":

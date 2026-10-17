@@ -11,6 +11,7 @@ STAGING_DIR=${STAGING_DIR:-$(dirname "$SCRIPT_DIR")}
 LIVE_DIR=${LIVE_DIR:-/home/pi/rpi-router-api}
 SYSTEMD_DIR=${SYSTEMD_DIR:-/etc/systemd/system}
 BACKUP_ROOT=${BACKUP_ROOT:-/var/backups/rpi-router}
+API_ENV_FILE=${API_ENV_FILE:-/etc/rpi-router-api.env}
 STAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP_DIR=$BACKUP_ROOT/$STAMP
 
@@ -42,6 +43,28 @@ if ! command -v gunicorn >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! command -v openssl >/dev/null 2>&1; then
+    echo "ERROR: openssl is required to generate the API token" >&2
+    exit 1
+fi
+
+if [ -f "$API_ENV_FILE" ]; then
+    if ! grep -Eq '^RPI_ROUTER_API_TOKEN=[0-9a-f]{64}$' "$API_ENV_FILE"; then
+        echo "ERROR: invalid API token file: $API_ENV_FILE" >&2
+        exit 1
+    fi
+else
+    umask 077
+    api_token=$(openssl rand -hex 32)
+    printf 'RPI_ROUTER_API_TOKEN=%s\n' "$api_token" >"$API_ENV_FILE"
+fi
+
+chown root:root "$API_ENV_FILE"
+chmod 0600 "$API_ENV_FILE"
+
+set -a
+. "$API_ENV_FILE"
+set +a
 gunicorn --check-config --chdir "$STAGING_DIR" app:app
 
 python3 -m compileall -q "$STAGING_DIR"
