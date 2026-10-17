@@ -1,445 +1,273 @@
-import json
-from database import get_connection
-import subprocess
+import os
 from datetime import datetime
 
+from access_policy import check_user_access, normalize_mac
+from database import get_connection, init_database
+from firewall import FirewallError, allow_mac, block_mac, get_blocked_macs
 
-DB_PATH = "/home/pi/rpi-router-api/router.db"
-LOG_FILE = "/var/log/rpi-router/access.log"
 
-NFT_FAMILY = "inet"
-NFT_TABLE = "parental_control"
-NFT_SET = "blocked_macs"
+LOG_FILE = os.environ.get(
+    "RPI_ROUTER_LOG_PATH",
+    "/var/log/rpi-router/access.log",
+)
 
 
 def write_log(message):
+    with open(LOG_FILE, "a", encoding="utf-8") as log_file:
+        log_file.write(message + "\n")
 
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(message + "\n")
 
-
-def run_nft(args):
-    result = subprocess.run(
-        ["nft"] + args,
-        capture_output=True,
-        text=True
+def write_access_log(
+    cur,
+    mac,
+    device_name,
+    user_name,
+    action,
+    reason,
+    timestamp,
+):
+    cur.execute(
+        """
+        INSERT INTO access_log (
+            device_mac,
+            device_name,
+            user_name,
+            action,
+            reason,
+            timestamp
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (mac, device_name, user_name, action, reason, timestamp),
     )
 
-    return result.returncode, result.stdout, result.stderr.strip()
+
+def get_previous_state(cur, mac):
+    cur.execute(
+        "SELECT action, reason FROM device_state WHERE mac = ?",
+        (mac,),
+    )
+    return cur.fetchone()
 
 
-def get_blocked_macs():
-    """
-    Возвращает текущее содержимое nftables set blocked_macs.
-    """
-
-    code, stdout, stderr = run_nft([
-        "-j",
-        "list",
-        "set",
-        NFT_FAMILY,
-        NFT_TABLE,
-        NFT_SET
-    ])
-
-    if code != 0:
-        raise RuntimeError(
-            f"cannot read nftables set: {stderr}"
-        )
-
-    data = json.loads(stdout)
-
-    blocked = set()
-
-    for item in data.get("nftables", []):
-        set_data = item.get("set")
-
-        if not set_data:
-            continue
-
-        elements = set_data.get("elem", [])
-
-        for element in elements:
-            if isinstance(element, str):
-                blocked.add(element.lower())
-
-    return blocked
-
-
-def nft_block(mac):
-    code, stdout, stderr = run_nft([
-        "add",
-        "element",
-        NFT_FAMILY,
-        NFT_TABLE,
-        NFT_SET,
-        "{",
-        mac,
-        "}"
-    ])
-
-    if code != 0:
-        return False, stderr
-
-    return True, None
-
-
-def nft_allow(mac):
-    code, stdout, stderr = run_nft([
-        "delete",
-        "element",
-        NFT_FAMILY,
-        NFT_TABLE,
-        NFT_SET,
-        "{",
-        mac,
-        "}"
-    ])
-
-    if code != 0:
-        return False, stderr
-
-    return True, None
-
-
-def check_access(cur, user_id, weekday, current_time):
-
-    cur.execute("""
-        SELECT access_mode
-        FROM users
-        WHERE id = ?
-    """, (user_id,))
-
-    row = cur.fetchone()
-
-    if not row:
-        return None, "user not found"
-
-    access_mode = row[0]
-
-    if access_mode == "always_allow":
-        return True, "manual allow"
-
-    if access_mode == "always_block":
-        return False, "manual block"
-
-    if access_mode != "schedule":
-        return None, f"invalid access_mode: {access_mode}"
-
-    #
-    # Расписания, которые начинаются сегодня.
-    #
-    cur.execute("""
-        SELECT start_time, end_time
-        FROM schedules
-        WHERE user_id = ?
-        AND weekday = ?
-    """, (
-        user_id,
-        weekday
-    ))
-
-    schedules = cur.fetchall()
-
-    for start_time, end_time in schedules:
-
-        #
-        # Обычный интервал, например 07:00-21:00.
-        #
-        if start_time <= end_time:
-
-            if start_time <= current_time <= end_time:
-                return True, f"{start_time}-{end_time}"
-
-        #
-        # Ночной интервал, например 22:00-07:00.
-        # Здесь проверяется часть ДО полуночи.
-        #
-        else:
-
-            if current_time >= start_time:
-                return True, f"{start_time}-{end_time}"
-
-    #
-    # Проверяем ночной интервал, начавшийся вчера.
-    #
-    previous_weekday = 7 if weekday == 1 else weekday - 1
-
-    cur.execute("""
-        SELECT start_time, end_time
-        FROM schedules
-        WHERE user_id = ?
-        AND weekday = ?
-    """, (
-        user_id,
-        previous_weekday
-    ))
-
-    previous_schedules = cur.fetchall()
-
-    for start_time, end_time in previous_schedules:
-
-        #
-        # Нас интересуют только интервалы,
-        # пересекающие полночь.
-        #
-        if start_time > end_time:
-
-            if current_time <= end_time:
-                return True, f"{start_time}-{end_time}"
-
-    return False, "outside schedule"
-
-
-def main():
-
-    now = datetime.now()
-    weekday = now.isoweekday()
-    current_time = now.strftime("%H:%M")
-
-    try:
-        blocked_macs = get_blocked_macs()
-
-    except Exception as error:
-        print(
-            f"{now:%Y-%m-%d %H:%M:%S} | "
-            f"ERROR | {error}"
-        )
-        return 1
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    def write_access_log(
-        cur,
-        mac,
-        device_name,
-        user_name,
-        action,
-        reason,
-        timestamp
-        ):
-
-        cur.execute("""
-            INSERT INTO access_log
-            (
-                device_mac,
-                device_name,
-                user_name,
-                action,
-                reason,
-                timestamp
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
+def update_state(
+    cur,
+    mac,
+    device_name,
+    user_name,
+    action,
+    reason,
+    timestamp,
+):
+    cur.execute(
+        """
+        INSERT INTO device_state (
             mac,
             device_name,
             user_name,
             action,
             reason,
             timestamp
-        ))
-
-    cur.execute("""
-        SELECT
-            devices.mac,
-            devices.name,
-            users.id,
-            users.name
-        FROM devices
-        JOIN users
-        ON devices.user_id = users.id
-    """)
-
-    def get_previous_state(cur, mac):
-
-        cur.execute("""
-            SELECT action, reason
-            FROM device_state
-            WHERE mac = ?
-        """, (mac,))
-
-        return cur.fetchone()
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mac) DO UPDATE SET
+            device_name = excluded.device_name,
+            user_name = excluded.user_name,
+            action = excluded.action,
+            reason = excluded.reason,
+            timestamp = excluded.timestamp
+        """,
+        (mac, device_name, user_name, action, reason, timestamp),
+    )
 
 
-    def update_state(
-        cur,
-        mac,
-        device_name,
-        user_name,
-        action,
-        reason,
-        timestamp
-        ):
+def remove_stale_state(cur, managed_macs):
+    if not managed_macs:
+        cur.execute("DELETE FROM device_state")
+        return cur.rowcount
 
-            cur.execute("""
-                UPDATE device_state
-                SET
-                    device_name = ?,
-                    user_name = ?,
-                    action = ?,
-                    reason = ?,
-                    timestamp = ?
-                WHERE mac = ?
-            """,
-            (
-                device_name,
-                user_name,
-                action,
-                reason,
-                timestamp,
-                mac
-            ))
+    placeholders = ", ".join("?" for _ in managed_macs)
+    cur.execute(
+        f"DELETE FROM device_state WHERE lower(mac) NOT IN ({placeholders})",
+        tuple(sorted(managed_macs)),
+    )
+    return cur.rowcount
 
-            if cur.rowcount == 0:
-                cur.execute("""
-                    INSERT INTO device_state
-                    (
-                        mac,
-                        device_name,
+
+def format_message(now, user_name, device_name, mac, action, reason):
+    return (
+        f"{now:%Y-%m-%d %H:%M:%S} | "
+        f"{user_name} | {device_name} | {mac} | {action} | {reason}"
+    )
+
+
+def main():
+    now = datetime.now()
+    timestamp = f"{now:%Y-%m-%d %H:%M:%S}"
+
+    try:
+        init_database()
+        blocked_macs = get_blocked_macs()
+    except Exception as error:
+        print(f"{timestamp} | ERROR | initialization failed: {error}")
+        return 1
+
+    conn = get_connection()
+    cur = conn.cursor()
+    exit_code = 0
+
+    try:
+        cur.execute(
+            """
+            SELECT devices.mac, devices.name, users.id, users.name
+            FROM devices
+            JOIN users ON devices.user_id = users.id
+            ORDER BY devices.id
+            """
+        )
+        devices = cur.fetchall()
+
+        managed_macs = set()
+        normalized_devices = []
+
+        for mac, device_name, user_id, user_name in devices:
+            try:
+                normalized_mac = normalize_mac(mac)
+            except ValueError as error:
+                print(
+                    format_message(
+                        now,
                         user_name,
-                        action,
-                        reason,
-                        timestamp
+                        device_name,
+                        str(mac),
+                        "ERROR",
+                        str(error),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
+                )
+                exit_code = 1
+                continue
+
+            managed_macs.add(normalized_mac)
+            normalized_devices.append(
+                (normalized_mac, device_name, user_id, user_name)
+            )
+
+        # This set is owned exclusively by this application. Remove firewall
+        # entries for devices which are no longer registered.
+        for orphan_mac in sorted(blocked_macs - managed_macs):
+            try:
+                allow_mac(orphan_mac)
+                blocked_macs.remove(orphan_mac)
+                message = f"{timestamp} | ORPHAN | {orphan_mac} | ALLOW | removed"
+                print(message)
+                write_log(message)
+            except FirewallError as error:
+                print(
+                    f"{timestamp} | ORPHAN | {orphan_mac} | ERROR | "
+                    f"cannot remove from blocked_macs: {error}"
+                )
+                exit_code = 1
+
+        removed_states = remove_stale_state(cur, managed_macs)
+        if removed_states:
+            message = (
+                f"{timestamp} | CLEANUP | removed stale device_state rows: "
+                f"{removed_states}"
+            )
+            print(message)
+            write_log(message)
+
+        for mac, device_name, user_id, user_name in normalized_devices:
+            decision = check_user_access(
+                cur,
+                user_id,
+                now.isoweekday(),
+                now.strftime("%H:%M"),
+            )
+            allowed = decision["allowed"]
+            reason = decision["reason"]
+
+            if allowed is None:
+                print(
+                    format_message(
+                        now,
+                        user_name,
+                        device_name,
+                        mac,
+                        "ERROR",
+                        reason,
+                    )
+                )
+                exit_code = 1
+                continue
+
+            try:
+                if allowed and mac in blocked_macs:
+                    allow_mac(mac)
+                    blocked_macs.remove(mac)
+                elif not allowed and mac not in blocked_macs:
+                    block_mac(mac)
+                    blocked_macs.add(mac)
+            except FirewallError as error:
+                print(
+                    format_message(
+                        now,
+                        user_name,
+                        device_name,
+                        mac,
+                        "ERROR",
+                        f"cannot update blocked_macs: {error}",
+                    )
+                )
+                exit_code = 1
+                continue
+
+            action = "ALLOW" if allowed else "BLOCK"
+            previous = get_previous_state(cur, mac)
+            state_changed = previous is None or previous[0] != action
+            details_changed = (
+                state_changed or previous is None or previous[1] != reason
+            )
+
+            if state_changed:
+                write_access_log(
+                    cur,
                     mac,
                     device_name,
                     user_name,
                     action,
                     reason,
-                    timestamp
-                ))
+                    timestamp,
+                )
 
-
-    devices = cur.fetchall()
-
-    exit_code = 0
-
-    for mac, device_name, user_id, user_name in devices:
-
-        mac = mac.lower()
-
-        allowed, reason = check_access(
-            cur,
-            user_id,
-            weekday,
-            current_time
-        )
-
-        #
-        # Некорректные данные.
-        # Firewall не изменяем.
-        #
-        if allowed is None:
-            print(
-                f"{now:%Y-%m-%d %H:%M:%S} | "
-                f"{user_name} | "
-                f"{device_name} | "
-                f"{mac} | "
-                f"ERROR | "
-                f"{reason}"
-            )
-
-            exit_code = 1
-            continue
-
-        #
-        # Доступ разрешён.
-        #
-        if allowed:
-
-            if mac in blocked_macs:
-
-                success, error = nft_allow(mac)
-
-                if not success:
-                    print(
-                        f"{now:%Y-%m-%d %H:%M:%S} | "
-                        f"{user_name} | "
-                        f"{device_name} | "
-                        f"{mac} | "
-                        f"ERROR | "
-                        f"cannot remove from blocked_macs: {error}"
-                    )
-
-                    exit_code = 1
-                    continue
-
-                blocked_macs.remove(mac)
-
-            action = "ALLOW"
-
-        #
-        # Доступ запрещён.
-        #
-        else:
-
-            if mac not in blocked_macs:
-
-                success, error = nft_block(mac)
-
-                if not success:
-                    print(
-                        f"{now:%Y-%m-%d %H:%M:%S} | "
-                        f"{user_name} | "
-                        f"{device_name} | "
-                        f"{mac} | "
-                        f"ERROR | "
-                        f"cannot add to blocked_macs: {error}"
-                    )
-
-                    exit_code = 1
-                    continue
-
-                blocked_macs.add(mac)
-
-            action = "BLOCK"
-
-        message = (
-            f"{now:%Y-%m-%d %H:%M:%S} | "
-            f"{user_name} | "
-            f"{device_name} | "
-            f"{mac} | "
-            f"{action} | "
-            f"{reason}"
-        )
-
-        print(message)
-        write_log(message)
-
-
-        previous = get_previous_state(cur, mac)
-
-        if previous is None or previous[0] != action:
-
-            write_access_log(
-                cur,
-                mac,
-                device_name,
-                user_name,
-                action,
-                reason,
-                f"{now:%Y-%m-%d %H:%M:%S}"
-            )
-
-        if previous is None or previous[0] != action or previous[1] != reason:
-            update_state(
-                cur,
-                mac,
-                device_name,
-                user_name,
-                action,
-                reason,
-                f"{now:%Y-%m-%d %H:%M:%S}"
-            )
+            if details_changed:
+                update_state(
+                    cur,
+                    mac,
+                    device_name,
+                    user_name,
+                    action,
+                    reason,
+                    timestamp,
+                )
+                message = format_message(
+                    now,
+                    user_name,
+                    device_name,
+                    mac,
+                    action,
+                    reason,
+                )
+                print(message)
+                write_log(message)
 
         conn.commit()
-
-    conn.close()
+    except Exception as error:
+        conn.rollback()
+        print(f"{timestamp} | ERROR | reconciliation failed: {error}")
+        return 1
+    finally:
+        conn.close()
 
     return exit_code
 

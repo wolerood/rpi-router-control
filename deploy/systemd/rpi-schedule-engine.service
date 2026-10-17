@@ -1,0 +1,11 @@
+[Unit]
+Description=RPi Router Schedule Engine
+After=network.target parental-control.service
+Requires=parental-control.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/pi/rpi-router-api
+ExecStart=/usr/bin/python3 /home/pi/rpi-router-api/schedule_engine.py
+Nice=5

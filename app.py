@@ -1,5 +1,12 @@
 from flask import Flask, jsonify, request
-from database import get_connection
+from access_policy import (
+    VALID_ACCESS_MODES,
+    check_user_access,
+    is_valid_time,
+    normalize_mac,
+)
+from database import get_connection, init_database
+from firewall import FirewallError, allow_mac, get_blocked_macs
 from datetime import datetime
 import sqlite3
 import subprocess
@@ -119,12 +126,20 @@ def add_user():
     if not data or "name" not in data:
         return jsonify({"error": "name required"}), 400
 
+    name = data["name"]
+
+    if not isinstance(name, str) or not name.strip():
+        return jsonify({
+            "error": "name must be non-empty string"
+        }), 400
+
+    name = name.strip()
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute(
         "INSERT INTO users (name) VALUES (?)",
-        (data["name"],)
+        (name,)
     )
 
     conn.commit()
@@ -135,7 +150,7 @@ def add_user():
 
     return jsonify({
         "id": user_id,
-        "name": data["name"]
+        "name": name
     })
 
 # переименование пользователя
@@ -202,11 +217,7 @@ def update_access_mode(user_id):
 
     access_mode = data["access_mode"]
 
-    allowed_modes = [
-        "schedule",
-        "always_allow",
-        "always_block"
-    ]
+    allowed_modes = list(VALID_ACCESS_MODES)
 
     if access_mode not in allowed_modes:
         return jsonify({
@@ -330,6 +341,18 @@ def add_device():
             "error": "user_id must be integer"
         }), 400
 
+    try:
+        mac = normalize_mac(mac)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    if not isinstance(name, str) or not name.strip():
+        return jsonify({
+            "error": "name must be non-empty string"
+        }), 400
+
+    name = name.strip()
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -419,6 +442,65 @@ def get_devices():
         })
 
     return jsonify(devices)
+
+
+@app.route("/devices/state", methods=["GET"])
+def get_device_states():
+    """Return observed firewall state alongside the last policy decision."""
+    try:
+        blocked_macs = get_blocked_macs()
+    except FirewallError as error:
+        return jsonify({
+            "error": "cannot read firewall state",
+            "detail": str(error)
+        }), 503
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+            d.id,
+            d.user_id,
+            d.mac,
+            d.name,
+            u.name,
+            s.action,
+            s.reason,
+            s.timestamp
+        FROM devices d
+        LEFT JOIN users u ON d.user_id = u.id
+        LEFT JOIN device_state s ON lower(s.mac) = lower(d.mac)
+        ORDER BY d.id
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    result = []
+    for row in rows:
+        try:
+            mac = normalize_mac(row[2])
+            actual_action = "BLOCK" if mac in blocked_macs else "ALLOW"
+            error = None
+        except ValueError as validation_error:
+            mac = row[2]
+            actual_action = None
+            error = str(validation_error)
+
+        result.append({
+            "id": row[0],
+            "user_id": row[1],
+            "mac": mac,
+            "name": row[3],
+            "user": row[4],
+            "actual_action": actual_action,
+            "last_decision": row[5],
+            "reason": row[6],
+            "updated_at": row[7],
+            "in_sync": row[5] == actual_action if actual_action else False,
+            "error": error,
+        })
+
+    return jsonify(result)
 
 # изменение устройства 
 @app.route("/devices/<int:device_id>", methods=["PATCH"])
@@ -562,18 +644,39 @@ def delete_device(device_id):
             "error": "device not found"
         }), 404
 
-    cur.execute("""
-        DELETE FROM devices
-        WHERE id = ?
-    """, (device_id,))
+    mac = normalize_mac(device[1])
 
-    conn.commit()
+    try:
+        blocked_macs = get_blocked_macs()
+    except FirewallError as error:
+        conn.close()
+        return jsonify({
+            "error": "cannot read firewall state",
+            "detail": str(error)
+        }), 503
+
+    try:
+        cur.execute("DELETE FROM device_state WHERE mac = ?", (mac,))
+        cur.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+
+        if mac in blocked_macs:
+            allow_mac(mac)
+
+        conn.commit()
+    except (sqlite3.Error, FirewallError) as error:
+        conn.rollback()
+        conn.close()
+        return jsonify({
+            "error": "cannot delete device safely",
+            "detail": str(error)
+        }), 503
+
     conn.close()
 
     return jsonify({
         "deleted": True,
         "device_id": device_id,
-        "mac": device[1],
+        "mac": mac,
         "name": device[2]
     })
 
@@ -651,10 +754,7 @@ def add_schedule():
             "error": "weekday must be integer from 1 to 7"
         }), 400
 
-    try:
-        datetime.strptime(start, "%H:%M")
-        datetime.strptime(end, "%H:%M")
-    except (ValueError, TypeError):
+    if not is_valid_time(start) or not is_valid_time(end):
         return jsonify({
             "error": "start and end must be in HH:MM format"
         }), 400
@@ -790,9 +890,7 @@ def update_schedule(schedule_id):
     if "start" in data:
         start = data["start"]
 
-        try:
-            datetime.strptime(start, "%H:%M")
-        except (ValueError, TypeError):
+        if not is_valid_time(start):
             conn.close()
 
             return jsonify({
@@ -805,9 +903,7 @@ def update_schedule(schedule_id):
     if "end" in data:
         end = data["end"]
 
-        try:
-            datetime.strptime(end, "%H:%M")
-        except (ValueError, TypeError):
+        if not is_valid_time(end):
             conn.close()
 
             return jsonify({
@@ -903,152 +999,32 @@ def delete_schedule(schedule_id):
 
 @app.route("/access/<int:user_id>")
 def check_access(user_id):
-
     now = datetime.now()
-
     weekday = now.isoweekday()
     current_time = now.strftime("%H:%M")
-
     conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT name, access_mode
-        FROM users
-        WHERE id = ?
-    """, (user_id,))
-
-    user = cur.fetchone()
-
-    if not user:
+    try:
+        result = check_user_access(
+            conn.cursor(),
+            user_id,
+            weekday,
+            current_time,
+        )
+    finally:
         conn.close()
 
+    if result["user"] is None:
+        return jsonify({"error": "user not found"}), 404
+
+    if result["allowed"] is None:
         return jsonify({
-            "error": "user not found"
-        }), 404
-
-    user_name = user[0]
-    access_mode = user[1]
-
-    if access_mode == "always_allow":
-        conn.close()
-
-        return jsonify({
-            "user": user_name,
-            "access_mode": access_mode,
-            "allowed": True,
-            "reason": "manual allow",
-            "time": current_time,
-            "weekday": weekday
-        })
-
-    if access_mode == "always_block":
-        conn.close()
-
-        return jsonify({
-            "user": user_name,
-            "access_mode": access_mode,
-            "allowed": False,
-            "reason": "manual block",
-            "time": current_time,
-            "weekday": weekday
-        })
-
-    if access_mode != "schedule":
-        conn.close()
-
-        return jsonify({
-            "error": "invalid access_mode",
-            "access_mode": access_mode
+            "error": result["reason"],
+            "access_mode": result["access_mode"]
         }), 500
 
-    #
-    # Расписания, начинающиеся сегодня.
-    #
-    cur.execute("""
-        SELECT start_time, end_time
-        FROM schedules
-        WHERE user_id = ?
-        AND weekday = ?
-    """, (
-        user_id,
-        weekday
-    ))
-
-    schedules = cur.fetchall()
-
-    for start_time, end_time in schedules:
-
-        if start_time <= end_time:
-
-            if start_time <= current_time <= end_time:
-                conn.close()
-
-                return jsonify({
-                    "user": user_name,
-                    "access_mode": access_mode,
-                    "allowed": True,
-                    "reason": f"{start_time}-{end_time}",
-                    "time": current_time,
-                    "weekday": weekday
-                })
-
-        else:
-
-            if current_time >= start_time:
-                conn.close()
-
-                return jsonify({
-                    "user": user_name,
-                    "access_mode": access_mode,
-                    "allowed": True,
-                    "reason": f"{start_time}-{end_time}",
-                    "time": current_time,
-                    "weekday": weekday
-                })
-
-    #
-    # Проверяем ночной интервал предыдущего дня.
-    #
-    previous_weekday = 7 if weekday == 1 else weekday - 1
-
-    cur.execute("""
-        SELECT start_time, end_time
-        FROM schedules
-        WHERE user_id = ?
-        AND weekday = ?
-    """, (
-        user_id,
-        previous_weekday
-    ))
-
-    previous_schedules = cur.fetchall()
-
-    conn.close()
-
-    for start_time, end_time in previous_schedules:
-
-        if start_time > end_time:
-
-            if current_time <= end_time:
-
-                return jsonify({
-                    "user": user_name,
-                    "access_mode": access_mode,
-                    "allowed": True,
-                    "reason": f"{start_time}-{end_time}",
-                    "time": current_time,
-                    "weekday": weekday
-                })
-
-    return jsonify({
-        "user": user_name,
-        "access_mode": access_mode,
-        "allowed": False,
-        "reason": "outside schedule",
-        "time": current_time,
-        "weekday": weekday
-    })
+    result["time"] = current_time
+    result["weekday"] = weekday
+    return jsonify(result)
 
 @app.route("/logs")
 def logs():
@@ -1085,4 +1061,6 @@ def logs():
 
     return jsonify(result) 
 
-app.run(host="0.0.0.0", port=8080)
+if __name__ == "__main__":
+    init_database()
+    app.run(host="0.0.0.0", port=8080)
