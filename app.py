@@ -130,8 +130,9 @@ def get_wifi_clients():
         )
 
         for line in result.splitlines():
-            if line.startswith("Station"):
-                mac = line.split()[1]
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == "Station":
+                mac = parts[1]
                 clients.add(mac.lower())
 
     except Exception:
@@ -165,8 +166,26 @@ def clients():
 
     conn.close()
 
+    clients_by_mac = {}
+
     for client in dhcp:
         mac = client["mac"].lower()
+        client["mac"] = mac
+        clients_by_mac[mac] = client
+
+    # A connected station does not necessarily have a DHCP lease: it may use a
+    # static address or may not have requested an address yet.  Keep it visible
+    # in the client list even when IP address and hostname are not known.
+    for mac in wifi:
+        clients_by_mac.setdefault(mac, {
+            "mac": mac,
+            "ip": None,
+            "name": mac,
+        })
+
+    result = []
+
+    for mac, client in clients_by_mac.items():
 
         client["online"] = mac in wifi
 
@@ -177,7 +196,9 @@ def clients():
             client["device_name"] = client["name"]
             client["owner"] = None
 
-    return jsonify(dhcp)
+        result.append(client)
+
+    return jsonify(result)
 
 
 @app.route("/users")

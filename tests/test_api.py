@@ -108,6 +108,53 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["mac"], "02:11:22:33:44:55")
 
+    def test_clients_include_wifi_station_without_dhcp_lease(self):
+        dhcp_client = {
+            "mac": "ca:ef:d8:95:11:b5",
+            "ip": "192.168.50.10",
+            "name": "phone",
+        }
+        wifi_only_mac = "02:11:22:33:44:55"
+
+        with (
+            patch.object(app_module, "get_dhcp_clients", return_value=[dhcp_client]),
+            patch.object(
+                app_module,
+                "get_wifi_clients",
+                return_value={dhcp_client["mac"], wifi_only_mac},
+            ),
+        ):
+            response = self.client.get("/clients")
+
+        self.assertEqual(response.status_code, 200)
+        clients = {client["mac"]: client for client in response.get_json()}
+        self.assertEqual(len(clients), 2)
+        self.assertTrue(clients[wifi_only_mac]["online"])
+        self.assertIsNone(clients[wifi_only_mac]["ip"])
+        self.assertEqual(clients[wifi_only_mac]["name"], wifi_only_mac)
+
+    def test_clients_merge_wifi_and_dhcp_entries_by_mac(self):
+        dhcp_client = {
+            "mac": "CA:EF:D8:95:11:B5",
+            "ip": "192.168.50.10",
+            "name": "phone",
+        }
+
+        with (
+            patch.object(app_module, "get_dhcp_clients", return_value=[dhcp_client]),
+            patch.object(
+                app_module,
+                "get_wifi_clients",
+                return_value={"ca:ef:d8:95:11:b5"},
+            ),
+        ):
+            response = self.client.get("/clients")
+
+        clients = response.get_json()
+        self.assertEqual(len(clients), 1)
+        self.assertEqual(clients[0]["mac"], "ca:ef:d8:95:11:b5")
+        self.assertTrue(clients[0]["online"])
+
     def test_reports_actual_firewall_state(self):
         with patch.object(
             app_module,
