@@ -53,9 +53,11 @@ each run it:
 5. changes nftables only when actual and desired state differ;
 6. writes history only when ALLOW/BLOCK changes.
 
-The timer templates in `deploy/systemd` use a one-second accuracy window so a
-policy is reconciled no later than approximately one minute after the previous
-run completes.
+The timer templates in `deploy/systemd` use monotonic timers: the first policy
+reconciliation runs five seconds after the timer is activated, then runs every
+60 seconds relative to the previous service activation. This remains reliable
+across boot-time wall-clock corrections on Raspberry Pi systems without an
+RTC. A one-second accuracy window limits scheduling drift.
 
 At boot, `parental-control.service` creates the nftables table before
 NetworkManager starts and runs `restore_firewall.py`. The restore step loads
